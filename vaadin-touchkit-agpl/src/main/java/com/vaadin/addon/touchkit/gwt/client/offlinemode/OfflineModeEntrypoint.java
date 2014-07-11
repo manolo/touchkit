@@ -14,6 +14,7 @@ import java.util.logging.Logger;
 
 import com.google.gwt.core.client.EntryPoint;
 import com.google.gwt.core.client.GWT;
+import com.google.gwt.core.client.JavaScriptObject;
 import com.google.gwt.core.client.Scheduler;
 import com.google.gwt.core.client.Scheduler.RepeatingCommand;
 import com.google.gwt.http.client.Request;
@@ -79,6 +80,7 @@ public class OfflineModeEntrypoint implements EntryPoint, CommunicationHandler,
 
     private static OfflineModeEntrypoint instance = null;
     private static OfflineMode offlineModeApp;
+    private static JavaScriptObject appConf = null;
 
     private NetworkStatus status = new NetworkStatus();
 
@@ -113,7 +115,9 @@ public class OfflineModeEntrypoint implements EntryPoint, CommunicationHandler,
         }
 
         private String computePingUrl() {
-            String url = getVaadinServiceUrl();
+            // Try to find the serviceUrl.
+            // Only needed when widgetset is local or it is in a CDN.
+            String url = getVaadinConfValue(getVaadinConf(), "serviceUrl");
             if (url == null) {
                 url = GWT.getHostPageBaseURL();
             }
@@ -121,25 +125,6 @@ public class OfflineModeEntrypoint implements EntryPoint, CommunicationHandler,
             logger.info("Ping URL " + url);
             return url;
         }
-
-        // Try to find the serviceUrl. When the device is
-        // off-line and the app has not been initialized yet.
-        // Only needed when widgetset is local or it is in a CDN.
-        private native String getVaadinServiceUrl()
-        /*-{
-          // When vaadin.initApplication is called, it changes
-          // the window name by: appId-random_number.
-          var appId = $wnd.name.replace(/-[\d.]+?$/, '');
-          var app = $wnd.vaadin.getApp(appId);
-          if (!app) {
-            // If window name is not set, try to get the appId
-            // from the application container
-            var elms = $doc.querySelectorAll('.v-app');
-            appId = elms && elms[0] && elms[0].id;
-            app = $wnd.vaadin.getApp(appId);
-          }
-          return app && app.getConfig('serviceUrl') || null;
-        }-*/;
     };
 
     /**
@@ -270,7 +255,7 @@ public class OfflineModeEntrypoint implements EntryPoint, CommunicationHandler,
      * is not ready we use a timer instead.
      */
     private void configureHeartBeat() {
-        if (status.isAppOnline()) {
+        if (status.isAppOnline() || !isOfflineModeEnabled()) {
             setHeartBeatInterval(onlinePingInterval);
         } else if (!status.isNetworkOnline()) {
             stopHeartBeat();
@@ -347,6 +332,9 @@ public class OfflineModeEntrypoint implements EntryPoint, CommunicationHandler,
      */
     private void goOffline(ActivationReason reason) {
         logger.info("Network OFFLINE (" + reason + ")");
+        if (!isOfflineModeEnabled()) {
+            return;
+        }
         lastReason = reason;
         getOfflineMode().activate(reason);
         if (applicationConnection != null) {
@@ -403,6 +391,15 @@ public class OfflineModeEntrypoint implements EntryPoint, CommunicationHandler,
     }
 
     /**
+     * Return true if offline mode is enabled in this app.
+     * When true we never show the offline UI when the server
+     * is unreachable.
+     */
+    public static boolean isOfflineModeEnabled() {
+        return Boolean.valueOf(getVaadinConfValue(getVaadinConf(), "offlineEnabled"));
+    }
+
+    /**
      * Check whether the server is reachable setting the status on the response.
      */
     public void ping() {
@@ -417,14 +414,14 @@ public class OfflineModeEntrypoint implements EntryPoint, CommunicationHandler,
     /*
      * Using this JSNI block in order to listen to certain DOM events not
      * available in GWT: HTML-5 and Cordova online/offline.
-     * 
+     *
      * We also listen to hash fragment changes and window post-messages, so as
      * the app is notified with offline events from the parent when it is
      * embedded in an iframe.
-     * 
+     *
      * This block has a couple of hacks to make the app or network go off-line:
      * tkGoOffline() tkGoOnline() tkServerDown() tkServerUp()
-     * 
+     *
      * NOTE: Most code here is for fixing android bugs firing wrong events and
      * setting erroneously online flags when it is inside webview.
      */
@@ -549,5 +546,33 @@ public class OfflineModeEntrypoint implements EntryPoint, CommunicationHandler,
           // Notify parent cordova container about the app was loaded.
           $wnd.parent.window.postMessage("touchkit-ready", "*");
         }
+    }-*/;
+
+    // Try to find the vaadin config js-object when the app is
+    // off-line and it has not been initialized yet
+    private static native JavaScriptObject getVaadinConf()
+    /*-{
+      var app = @com.vaadin.addon.touchkit.gwt.client.offlinemode.OfflineModeEntrypoint::appConf;
+      if (app == null) {
+        // When vaadin.initApplication is called, it changes
+        // the window name by: appId-random_number.
+        var appId = $wnd.name.replace(/-[\d.]+?$/, '');
+        var app = $wnd.vaadin.getApp(appId);
+        if (!app) {
+          // If window name is not set, try to get the appId
+          // from the application container
+          var elms = $doc.querySelectorAll('.v-app');
+          appId = elms && elms[0] && elms[0].id;
+          app = $wnd.vaadin.getApp(appId);
+        }
+        @com.vaadin.addon.touchkit.gwt.client.offlinemode.OfflineModeEntrypoint::appConf = app;
+      }
+      return app;
+    }-*/;
+
+    // Get a vaadin config value
+    private static native String getVaadinConfValue(JavaScriptObject app, String key)
+    /*-{
+      return app && app.getConfig(key) || null;
     }-*/;
 }
